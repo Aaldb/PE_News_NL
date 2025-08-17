@@ -14,31 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Load the news dataset
-@st.cache_data
-def load_news_dataset():
-    """Load the combined news labeled dataset"""
-    try:
-        with open('combined_news_labeled.json', 'r') as f:
-            data = json.load(f)
-        df = pd.DataFrame(data)
-        # Convert date column to datetime
-        df['date'] = pd.to_datetime(df['date'])
-        return df
-    except Exception as e:
-        st.error(f"Error loading news dataset: {str(e)}")
-        return pd.DataFrame()
-
-# Initialize session state
-if 'data' not in st.session_state:
-    st.session_state.data = load_news_dataset()
-if 'original_data' not in st.session_state:
-    st.session_state.original_data = st.session_state.data.copy() if st.session_state.data is not None else pd.DataFrame()
-if 'filtered_data' not in st.session_state:
-    st.session_state.filtered_data = st.session_state.data.copy() if st.session_state.data is not None else pd.DataFrame()
-
-
-
 def get_column_stats(df, column):
     """Get statistical information for a column"""
     stats = {}
@@ -98,10 +73,56 @@ def convert_df_to_excel(df):
     output.seek(0)
     return output.getvalue()
 
+def load_uploaded_file(uploaded_file):
+    """Load data from uploaded file"""
+    try:
+        if uploaded_file.name.endswith('.json'):
+            data = json.load(uploaded_file)
+            df = pd.DataFrame(data)
+        elif uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xls', '.xlsx')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file format. Please upload a JSON, CSV, or Excel file.")
+            return pd.DataFrame()
+            
+        # Convert date column to datetime if exists
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+        return df
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
+        return pd.DataFrame()
+
 # Main application
 def main():
     st.title("📰 News Dataset Explorer")
     st.markdown("Explore labeled news articles with interactive features!")
+    
+    # File uploader
+    uploaded_file = st.file_uploader(
+        "Upload your news dataset (JSON, CSV, or Excel)", 
+        type=['json', 'csv', 'xls', 'xlsx'],
+        key="file_uploader"
+    )
+    
+    # Initialize session state
+    if 'data' not in st.session_state:
+        st.session_state.data = pd.DataFrame()
+    if 'original_data' not in st.session_state:
+        st.session_state.original_data = pd.DataFrame()
+    if 'filtered_data' not in st.session_state:
+        st.session_state.filtered_data = pd.DataFrame()
+    
+    # Load data if file is uploaded
+    if uploaded_file is not None:
+        if 'uploaded_file_name' not in st.session_state or st.session_state.uploaded_file_name != uploaded_file.name:
+            st.session_state.uploaded_file_name = uploaded_file.name
+            with st.spinner("Loading data..."):
+                st.session_state.data = load_uploaded_file(uploaded_file)
+                st.session_state.original_data = st.session_state.data.copy() if st.session_state.data is not None else pd.DataFrame()
+                st.session_state.filtered_data = st.session_state.data.copy() if st.session_state.data is not None else pd.DataFrame()
     
     # Sidebar for dataset info
     with st.sidebar:
@@ -115,21 +136,26 @@ def main():
             
             # Show dataset statistics
             st.subheader("Quick Stats")
-            st.metric("Labels", data['label'].nunique())
-            st.metric("Sources", data['source'].nunique())
-            st.metric("Date Range", f"{data['date'].min().strftime('%Y-%m-%d')} to {data['date'].max().strftime('%Y-%m-%d')}")
+            if 'label' in data.columns:
+                st.metric("Labels", data['label'].nunique())
+            if 'source' in data.columns:
+                st.metric("Sources", data['source'].nunique())
+            if 'date' in data.columns:
+                st.metric("Date Range", f"{data['date'].min().strftime('%Y-%m-%d')} to {data['date'].max().strftime('%Y-%m-%d')}")
             
             # Label distribution
-            st.subheader("Article Labels")
-            label_counts = data['label'].value_counts()
-            for label, count in label_counts.items():
-                st.text(f"{label}: {count}")
-                
+            if 'label' in data.columns:
+                st.subheader("Article Labels")
+                label_counts = data['label'].value_counts()
+                for label, count in label_counts.items():
+                    st.text(f"{label}: {count}")
+                    
             # Source distribution  
-            st.subheader("Top Sources")
-            source_counts = data['source'].value_counts().head(5)
-            for source, count in source_counts.items():
-                st.text(f"{source}: {count}")
+            if 'source' in data.columns:
+                st.subheader("Top Sources")
+                source_counts = data['source'].value_counts().head(5)
+                for source, count in source_counts.items():
+                    st.text(f"{source}: {count}")
     
     # Main content area
     if st.session_state.data is not None and len(st.session_state.data) > 0:
@@ -314,77 +340,80 @@ def main():
             st.header("Search and Filter Data")
             
             # Initialize session state for filters if not exists
-            if 'selected_labels' not in st.session_state:
+            if 'selected_labels' not in st.session_state and 'label' in data.columns:
                 st.session_state.selected_labels = list(data['label'].unique())
-            if 'selected_sources' not in st.session_state:
+            if 'selected_sources' not in st.session_state and 'source' in data.columns:
                 st.session_state.selected_sources = []
             
             # Main filter controls
             col1, col2 = st.columns(2)
             
             with col1:
-                st.subheader("📋 Filter by Label")
-                all_labels = sorted(data['label'].unique())
-                selected_labels = st.multiselect(
-                    "Select multiple labels:",
-                    all_labels,
-                    default=st.session_state.selected_labels,
-                    key="label_filter"
-                )
-                st.session_state.selected_labels = selected_labels
+                if 'label' in data.columns:
+                    st.subheader("📋 Filter by Label")
+                    all_labels = sorted(data['label'].unique())
+                    selected_labels = st.multiselect(
+                        "Select multiple labels:",
+                        all_labels,
+                        default=st.session_state.get('selected_labels', []),
+                        key="label_filter"
+                    )
+                    st.session_state.selected_labels = selected_labels
                 
             with col2:
-                st.subheader("📰 Filter by Source")
-                all_sources = sorted(data['source'].unique())
-                
-                # Create toggle buttons for sources
-                st.write("Click to toggle sources:")
-                
-                # Control buttons
-                control_col1, control_col2 = st.columns(2)
-                with control_col1:
-                    if st.button("✅ Select All Sources"):
-                        st.session_state.selected_sources = list(all_sources)
-                        st.rerun()
-                with control_col2:
-                    if st.button("❌ Clear All Sources"):
-                        st.session_state.selected_sources = []
-                        st.rerun()
-                
-                # Source toggle buttons
-                source_cols = st.columns(min(3, len(all_sources)))
-                
-                for i, source in enumerate(all_sources):
-                    col_idx = i % 3
-                    with source_cols[col_idx]:
-                        is_selected = source in st.session_state.selected_sources
-                        button_style = "🔘" if is_selected else "⚪"
-                        
-                        if st.button(f"{button_style} {source}", key=f"source_{source}"):
-                            if is_selected:
-                                st.session_state.selected_sources.remove(source)
-                            else:
-                                st.session_state.selected_sources.append(source)
+                if 'source' in data.columns:
+                    st.subheader("📰 Filter by Source")
+                    all_sources = sorted(data['source'].unique())
+                    
+                    # Create toggle buttons for sources
+                    st.write("Click to toggle sources:")
+                    
+                    # Control buttons
+                    control_col1, control_col2 = st.columns(2)
+                    with control_col1:
+                        if st.button("✅ Select All Sources"):
+                            st.session_state.selected_sources = list(all_sources)
                             st.rerun()
-                
-                # Show selected sources
-                if st.session_state.selected_sources:
-                    st.success(f"**Selected sources:** {', '.join(st.session_state.selected_sources)}")
-                else:
-                    st.info("**No sources selected** - showing all articles")
-                
-                selected_sources = st.session_state.selected_sources
+                    with control_col2:
+                        if st.button("❌ Clear All Sources"):
+                            st.session_state.selected_sources = []
+                            st.rerun()
+                    
+                    # Source toggle buttons
+                    source_cols = st.columns(min(3, len(all_sources)))
+                    
+                    for i, source in enumerate(all_sources):
+                        col_idx = i % 3
+                        with source_cols[col_idx]:
+                            is_selected = source in st.session_state.selected_sources
+                            button_style = "🔘" if is_selected else "⚪"
+                            
+                            if st.button(f"{button_style} {source}", key=f"source_{source}"):
+                                if is_selected:
+                                    st.session_state.selected_sources.remove(source)
+                                else:
+                                    st.session_state.selected_sources.append(source)
+                                st.rerun()
+                    
+                    # Show selected sources
+                    if st.session_state.selected_sources:
+                        st.success(f"**Selected sources:** {', '.join(st.session_state.selected_sources)}")
+                    else:
+                        st.info("**No sources selected** - showing all articles")
+                    
+                    selected_sources = st.session_state.selected_sources
             
             # Date range filter
-            st.subheader("📅 Filter by Date Range")
-            min_date = data['date'].min().date()
-            max_date = data['date'].max().date()
-            
-            date_col1, date_col2 = st.columns(2)
-            with date_col1:
-                start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
-            with date_col2:
-                end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
+            if 'date' in data.columns:
+                st.subheader("📅 Filter by Date Range")
+                min_date = data['date'].min().date()
+                max_date = data['date'].max().date()
+                
+                date_col1, date_col2 = st.columns(2)
+                with date_col1:
+                    start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
+                with date_col2:
+                    end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
             
             # Global search
             st.subheader("🔍 Text Search")
@@ -394,38 +423,48 @@ def main():
             with search_col2:
                 st.write("")  # Add spacing
                 if st.button("🔄 Reset All Filters", help="Clear all filters and show all articles"):
-                    st.session_state.selected_labels = list(data['label'].unique())
-                    st.session_state.selected_sources = []
+                    if 'label' in data.columns:
+                        st.session_state.selected_labels = list(data['label'].unique())
+                    if 'source' in data.columns:
+                        st.session_state.selected_sources = []
                     st.rerun()
             
             # Apply filters
             filtered_data = data.copy()
             
-            # Filter by label
-            if selected_labels:
-                filtered_data = filtered_data[filtered_data['label'].isin(selected_labels)]
+            # Filter by label if exists
+            if 'label' in data.columns and 'selected_labels' in st.session_state and st.session_state.selected_labels:
+                filtered_data = filtered_data[filtered_data['label'].isin(st.session_state.selected_labels)]
             
-            # Filter by source (only if sources are selected)
-            if selected_sources:
-                filtered_data = filtered_data[filtered_data['source'].isin(selected_sources)]
+            # Filter by source if exists (only if sources are selected)
+            if 'source' in data.columns and 'selected_sources' in st.session_state and st.session_state.selected_sources:
+                filtered_data = filtered_data[filtered_data['source'].isin(st.session_state.selected_sources)]
             
-            # Filter by date range
-            start_date_ts = pd.Timestamp(start_date)
-            end_date_ts = pd.Timestamp(end_date)
-            
-            filtered_data = filtered_data[
-                (filtered_data['date'] >= start_date_ts) & 
-                (filtered_data['date'] <= end_date_ts)
-            ]
+            # Filter by date range if exists
+            if 'date' in data.columns:
+                start_date_ts = pd.Timestamp(start_date)
+                end_date_ts = pd.Timestamp(end_date)
+                
+                filtered_data = filtered_data[
+                    (filtered_data['date'] >= start_date_ts) & 
+                    (filtered_data['date'] <= end_date_ts)
+                ]
             
             # Apply text search
             if search_term and search_term.strip():
-                search_mask = (
-                    filtered_data['title'].str.contains(search_term, case=False, na=False) |
-                    filtered_data['description'].str.contains(search_term, case=False, na=False) |
-                    filtered_data['body'].str.contains(search_term, case=False, na=False)
-                )
-                filtered_data = filtered_data[search_mask]
+                search_columns = []
+                if 'title' in data.columns:
+                    search_columns.append('title')
+                if 'description' in data.columns:
+                    search_columns.append('description')
+                if 'body' in data.columns:
+                    search_columns.append('body')
+                
+                if search_columns:
+                    search_mask = pd.Series(False, index=filtered_data.index)
+                    for col in search_columns:
+                        search_mask |= filtered_data[col].str.contains(search_term, case=False, na=False)
+                    filtered_data = filtered_data[search_mask]
             
             st.session_state.filtered_data = filtered_data
             
@@ -438,14 +477,14 @@ def main():
                 st.metric("Original Total", f"{len(data):,}")
                 
             with summary_col2:
-                if len(filtered_data) > 0:
+                if len(filtered_data) > 0 and 'label' in filtered_data.columns:
                     filtered_labels = filtered_data['label'].value_counts()
                     st.write("**Labels in Results:**")
                     for label, count in filtered_labels.items():
                         st.text(f"{label}: {count}")
                         
             with summary_col3:
-                if len(filtered_data) > 0:
+                if len(filtered_data) > 0 and 'source' in filtered_data.columns:
                     filtered_sources = filtered_data['source'].value_counts()
                     st.write("**Sources in Results:**")
                     for source, count in filtered_sources.head(5).items():
@@ -489,23 +528,30 @@ def main():
                         with st.container():
                             st.markdown("---")
                             
-                            # Header with label and source
+                            # Header with label and source if they exist
                             header_col1, header_col2, header_col3 = st.columns([2, 1, 1])
                             with header_col1:
-                                st.markdown(f"**📅 {row['date'].strftime('%Y-%m-%d')}**")
+                                if 'date' in row:
+                                    st.markdown(f"**📅 {row['date'].strftime('%Y-%m-%d')}**")
                             with header_col2:
-                                st.markdown(f"**🏷️ {row['label']}**")
+                                if 'label' in row:
+                                    st.markdown(f"**🏷️ {row['label']}**")
                             with header_col3:
-                                st.markdown(f"**📰 {row['source']}**")
+                                if 'source' in row:
+                                    st.markdown(f"**📰 {row['source']}**")
                             
-                            # Title and description
-                            st.markdown(f"### {row['title']}")
-                            st.markdown(f"*{row['description']}*")
+                            # Title and description if they exist
+                            if 'title' in row:
+                                st.markdown(f"### {row['title']}")
+                            if 'description' in row:
+                                st.markdown(f"*{row['description']}*")
                             
-                            # Body preview with expand option
-                            with st.expander("📖 Read full article"):
-                                st.markdown(row['body'])
-                                st.markdown(f"**🔗 Source URL:** {row['url']}")
+                            # Body preview with expand option if exists
+                            if 'body' in row:
+                                with st.expander("📖 Read full article"):
+                                    st.markdown(row['body'])
+                                    if 'url' in row:
+                                        st.markdown(f"**🔗 Source URL:** {row['url']}")
                 else:
                     # Display as data table
                     st.dataframe(
@@ -573,45 +619,23 @@ def main():
                 st.warning("No data available for export.")
     
     else:
-        # Error screen when data fails to load
-        st.markdown("""
-        ## ⚠️ News Dataset Not Found
-        
-        The news dataset (`combined_news_labeled.json`) could not be loaded.
-        
-        Please ensure the file exists and contains valid JSON data with news articles.
-        
-        ### Expected Dataset Structure:
-        - **title**: Article headline
-        - **content**: Article text content
-        - **category**: News category (Business, Technology, etc.)
-        - **sentiment**: Article sentiment (Positive, Negative, Neutral)
-        - **source**: News source publication
-        - **date**: Publication date
-        - **word_count**: Number of words in article
-        - **keywords**: Array of relevant keywords
-        """)
-        
-        # Sample data structure guide
-        with st.expander("📚 Supported Data Formats"):
+        if uploaded_file is None:
             st.markdown("""
-            **CSV Files**: Comma-separated values with headers
-            ```
-            Name,Age,City
-            John,25,New York
-            Jane,30,Los Angeles
-            ```
+            ## 📤 Upload a News Dataset
             
-            **Excel Files**: .xlsx or .xls format with data in the first sheet
+            Please upload a JSON, CSV, or Excel file containing news articles to begin exploration.
             
-            **JSON Files**: Array of objects or records format
-            ```json
-            [
-                {"Name": "John", "Age": 25, "City": "New York"},
-                {"Name": "Jane", "Age": 30, "City": "Los Angeles"}
-            ]
-            ```
+            ### Expected Dataset Structure:
+            - **title**: Article headline
+            - **content/body**: Article text content
+            - **label/category**: News category (Business, Technology, etc.)
+            - **source**: News source publication
+            - **date**: Publication date
+            
+            The app will automatically detect and adapt to your dataset's structure.
             """)
+        else:
+            st.error("⚠️ The uploaded file could not be processed. Please ensure it's a valid JSON, CSV, or Excel file with news data.")
 
 if __name__ == "__main__":
     main()
