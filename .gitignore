@@ -1,0 +1,13 @@
+# Data files
+private/
+combined_news_labeled.json
+*.json
+*.csv
+*.xlsx
+
+# Environment
+.env
+secrets.toml
+
+# System files
+.DS_Store
